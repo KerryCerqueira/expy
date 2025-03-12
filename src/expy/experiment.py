@@ -1,7 +1,7 @@
 import abc
 from types import ModuleType
 from serde import serde, field, Untagged
-from serde.json import to_json
+from serde.json import to_json, from_json
 from pathlib import Path
 from typing import Any, Tuple, ClassVar, Optional, Iterator, Union
 from collections.abc import Callable
@@ -9,7 +9,6 @@ import importlib
 import importlib.util
 from llama_cpp import CreateCompletionResponse, Llama
 from git import Repo, InvalidGitRepositoryError, Commit, Blob
-import io
 import fnmatch
 from hashlib import sha256
 import nbclient
@@ -20,32 +19,32 @@ import nbformat
 class DataSpec:
     dataset_commit: Optional[str]
     data_paths: list[str]
-    data_repo: Path = field(default=Path("data/"))
+    data_repo_path: Path = field(default=Path("data/"))
 
     def has_repo(self) -> bool:
         try:
-            with Repo(self.data_repo) as _:
-                return True
+            _ = Repo(self.data_repo_path)
+            return True
         except InvalidGitRepositoryError:
-            return False
-
-    def has_commit(self) -> bool:
-        try:
-            with Repo(self.data_repo) as repo:
-                if self.dataset_commit is None:
-                    return True
-                repo.commit(self.dataset_commit)
-                return True
-        except InvalidGitRepositoryError:
-            return False
-        except ValueError:
             return False
 
     def get_repo(self) -> Repo:
-        return Repo(self.data_repo)
+        return Repo(self.data_repo_path)
 
     def get_commit(self) -> Commit:
         return self.get_repo().commit(self.dataset_commit)
+
+    def has_commit(self) -> bool:
+        if self.dataset_commit is None:
+            return False
+        else:
+            try:
+                self.get_commit()
+                return True
+            except InvalidGitRepositoryError:
+                return False
+            except ValueError:
+                return False
 
     def expand_paths(self) -> list[str]:
         file_paths = [
@@ -58,18 +57,27 @@ class DataSpec:
         ]
         return [item for sublist in unflattened_list for item in sublist]
 
-    def get_data_iter(self) -> Iterator[Tuple[str, io.BytesIO]]:
-        # TODO: Deal with case when commit is not spec'd
+    def get_data_iter(self) -> Iterator[Tuple[str, str]]:
+        # TODO: Clean this awful control structure up
         for path in self.expand_paths():
-            yield (
-                path,
-                io.BytesIO(
-                        self.get_commit()
-                        .tree[path]
-                        .data_stream
-                        .read()
+            if self.dataset_commit is None:
+                working_tree = self.get_repo().working_tree_dir
+                if working_tree is not None:
+                    full_path = Path(working_tree) / path
+                    with open(full_path, "r", encoding="utf-8") as file:
+                        data = file.read()
+                else:
+                    raise ValueError("Bare repositories not supported")
+            else:
+                data = (
+                    self
+                    .get_commit()
+                    .tree[path]
+                    .data_stream
+                    .read()
+                    .decode("utf-8")
                 )
-            )
+            yield (path, data)
 
 
 @serde
@@ -185,7 +193,7 @@ class LibOutputPipeSpec:
         init=False,
         repr=False
     )
-    # Couldn't we import this with a standard non-dynamic mechanism?
+    # TODO: Couldn't we import this with a standard non-dynamic mechanism?
     _output_lib: ClassVar[ModuleType] = importlib.import_module(
         ".pipelines.output",
         package=__package__
@@ -222,11 +230,14 @@ class Experiment:
     dataset: DataSpec = field(flatten=True)
     pre_inference_pipeline: LibInputPipeSpec | CustomInputPipeSpec
     inference_pipeline: LocalModelSpec | HFModelSpec
-    # TODO: Refactor as list of pipeline unions
     post_inference_pipeline: Optional[list[Union[
         LibOutputPipeSpec,
         NotebookPipeSpec
     ]]]
+
+    @staticmethod
+    def from_json(json_str: str) -> "Experiment":
+        return from_json(Experiment, json_str)
 
     def get_hash(self) -> str:
         # TODO: Add input/output module to hash input
@@ -256,11 +267,9 @@ class Experiment:
         # TODO: Add logging
         data_iter = self.dataset.get_data_iter()
         output = {}
-        for path, blob in data_iter:
-            with blob:
-                data = blob.read().decode("utf-8")
-                output[path] = self.inference_pipeline(
-                    self.pre_inference_pipeline(data)
-                )
+        for path, data in data_iter:
+            output[path] = self.inference_pipeline(
+                self.pre_inference_pipeline(data)
+            )
         with open("inferences.json", "w") as inferences_file:
             inferences_file.write(to_json(output))
