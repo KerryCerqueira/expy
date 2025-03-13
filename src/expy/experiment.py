@@ -17,9 +17,9 @@ import nbformat
 
 @serde
 class DataSpec:
-    dataset_commit: Optional[str]
-    data_paths: list[str]
-    data_repo_path: Path = field(default=Path("data/"))
+    dataset_commit: Optional[str] = field(kw_only=True, default=None)
+    data_paths: list[str] = field(kw_only=True)
+    data_repo_path: Path = field(kw_only=True, default=Path("data/"))
 
     def has_repo(self) -> bool:
         try:
@@ -82,7 +82,7 @@ class DataSpec:
 
 @serde
 class InputPipeSpec(abc.ABC):
-    kwargs: Optional[dict[str, Any]]
+    kwargs: Optional[dict[str, Any]] = field(default=None, kw_only=True)
     _pipeline_fn: Callable[..., str] = field(
         skip=True,
         init=False,
@@ -95,7 +95,7 @@ class InputPipeSpec(abc.ABC):
 
 @serde
 class LibInputPipeSpec(InputPipeSpec):
-    lib_fn: str
+    lib_fn: str = field(kw_only=True)
     _input_lib: ClassVar[ModuleType] = importlib.import_module(
         ".pipelines.input",
         package=__package__
@@ -111,8 +111,8 @@ class LibInputPipeSpec(InputPipeSpec):
 
 @serde
 class CustomInputPipeSpec(InputPipeSpec):
-    module: Path
-    fn_name: str = field(default="input_pipeline")
+    module: Path = field(kw_only=True)
+    fn_name: str = field(kw_only=True, default="input_pipeline")
 
     def __post_init__(self) -> None:
         # TODO: Add exception handling
@@ -128,7 +128,7 @@ class CustomInputPipeSpec(InputPipeSpec):
 
 @serde
 class ModelSpec(abc.ABC):
-    kwargs: Optional[dict[str, Any]]
+    kwargs: Optional[dict[str, Any]] = field(kw_only=True, default=None)
     _pipeline_fn: Optional[Llama] = field(
         skip=True,
         init=False,
@@ -154,7 +154,7 @@ class ModelSpec(abc.ABC):
 
 @serde
 class LocalModelSpec(ModelSpec):
-    model_path: Path
+    model_path: Path = field(kw_only=True)
 
     def _init_model(self) -> None:
         # TODO: Add exception handling, precheck model spec
@@ -169,8 +169,8 @@ class LocalModelSpec(ModelSpec):
 
 @serde
 class HFModelSpec(ModelSpec):
-    repo_id: str
-    filename: str
+    repo_id: str = field(kw_only=True)
+    filename: str = field(kw_only=True)
 
     def _init_model(self) -> None:
         # TODO: Add exception handling, precheck model spec
@@ -186,8 +186,8 @@ class HFModelSpec(ModelSpec):
 
 @serde
 class LibOutputPipeSpec:
-    lib_fn: str
-    kwargs: Optional[dict[str, Any]]
+    lib_fn: str = field(kw_only=True)
+    kwargs: Optional[dict[str, Any]] = field(kw_only=True, default=None)
     _pipeline_fn: Callable[..., str] = field(
         skip=True,
         init=False,
@@ -211,8 +211,8 @@ class LibOutputPipeSpec:
 
 @serde
 class NotebookPipeSpec:
-    notebook_paths: list[Path]
-    kernel: Optional[str]
+    notebook_paths: list[Path] = field(kw_only=True)
+    kernel: Optional[str] = field(kw_only=True, default=None)
 
     def __call__(self) -> None:
         for nb_path in self.notebook_paths:
@@ -227,13 +227,17 @@ class NotebookPipeSpec:
 
 @serde(tagging=Untagged)
 class Experiment:
-    dataset: DataSpec = field(flatten=True)
-    pre_inference_pipeline: LibInputPipeSpec | CustomInputPipeSpec
-    inference_pipeline: LocalModelSpec | HFModelSpec
-    post_inference_pipeline: Optional[list[Union[
-        LibOutputPipeSpec,
-        NotebookPipeSpec
-    ]]]
+    dataset: DataSpec = field(kw_only=True, flatten=True)
+    pre_inference_pipeline: (
+       LibInputPipeSpec | CustomInputPipeSpec
+    ) = field(
+        kw_only=True,
+        default_factory=lambda: LibInputPipeSpec(lib_fn="id")
+    )
+    inference_pipeline: LocalModelSpec | HFModelSpec = field(kw_only=True)
+    post_inference_pipeline: (
+        list[Union[LibOutputPipeSpec, NotebookPipeSpec]]
+    ) = field(kw_only=True, default_factory=list)
 
     @staticmethod
     def from_json(json_str: str) -> "Experiment":
