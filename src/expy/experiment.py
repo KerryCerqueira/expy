@@ -22,6 +22,14 @@ class DataSpec:
     data_paths: list[str] = field(kw_only=True)
     data_repo_path: Optional[Path] = field(kw_only=True, default=None)
 
+    def __post_init__(self):
+        if self.data_repo_path is not None and self.data_commit is None:
+            self.data_commit = "HEAD"
+        if self.data_repo_path is None and self.data_commit is not None:
+            raise ValueError(
+                "Must specify a data repository when specifying a commit"
+            )
+
     def get_repo(self) -> Optional[Repo]:
         if self.data_repo_path is None:
             return None
