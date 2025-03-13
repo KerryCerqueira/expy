@@ -22,9 +22,8 @@ pip install ./expy
 ```
 
 ## Usage
-
-Say you have a git repository containing some textual data you want to perform
-inference on, whose `HEAD`/`INDEX` looks like:
+### A minimal example
+Say you have directory containing some textual data you want to perform inference on.
 
 ```text
 experiment/
@@ -40,21 +39,16 @@ We'll need a lightweight model to test the inference. For example, we could snag
 huggingface-cli download TheBloke/phi-2-GGUF phi-2.Q2_K.gguf --local-dir ./models --local-dir-use-symlinks False
 ```
 
-Now we can specify a simple experiment in `experiment.json`:
+Now we can specify a simple experiment in `experiment.json`,
 
 ```json
 {
-    "dataset_commit": "HEAD",
-    "data_paths": [
-        "*.txt"
-    ],
-    "data_repo": "data",
-    "pre_inference_pipeline": { "lib_fn": "id" },
+    "data_paths": ["data/*.txt"],
     "inference_pipeline": { "model_path": "models/phi-2.Q2_K.gguf" }
 }
 ```
 
-Now we can run the experiment. We could either use the CLI,
+and then run the experiment. We could either use the CLI,
 
 ```bash
 expy run experiment.json

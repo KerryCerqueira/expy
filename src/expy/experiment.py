@@ -8,8 +8,9 @@ from collections.abc import Callable
 import importlib
 import importlib.util
 from llama_cpp import CreateCompletionResponse, Llama
-from git import Repo, InvalidGitRepositoryError, Commit, Blob
+from git import Repo, Commit, Blob
 import fnmatch
+import glob
 from hashlib import sha256
 import nbclient
 import nbformat
@@ -17,67 +18,64 @@ import nbformat
 
 @serde
 class DataSpec:
-    dataset_commit: Optional[str] = field(kw_only=True, default=None)
+    data_commit: Optional[str] = field(kw_only=True, default=None)
     data_paths: list[str] = field(kw_only=True)
-    data_repo_path: Path = field(kw_only=True, default=Path("data/"))
+    data_repo_path: Optional[Path] = field(kw_only=True, default=None)
+
+    def get_repo(self) -> Optional[Repo]:
+        if self.data_repo_path is None:
+            return None
+        else:
+            return Repo(self.data_repo_path)
 
     def has_repo(self) -> bool:
-        try:
-            _ = Repo(self.data_repo_path)
-            return True
-        except InvalidGitRepositoryError:
-            return False
+        return self.get_repo() is not None
 
-    def get_repo(self) -> Repo:
-        return Repo(self.data_repo_path)
-
-    def get_commit(self) -> Commit:
-        return self.get_repo().commit(self.dataset_commit)
+    def get_commit(self) -> Optional[Commit]:
+        repo = self.get_repo()
+        if self.data_commit is None or repo is None:
+            return None
+        else:
+            return repo.commit(self.data_commit)
 
     def has_commit(self) -> bool:
-        if self.dataset_commit is None:
-            return False
-        else:
-            try:
-                self.get_commit()
-                return True
-            except InvalidGitRepositoryError:
-                return False
-            except ValueError:
-                return False
+        return self.get_commit is not None
 
     def expand_paths(self) -> list[str]:
-        file_paths = [
-            str(obj.path)
-            for obj in self.get_commit().tree.traverse()
-            if isinstance(obj, Blob)
-        ]
-        unflattened_list = [
-            fnmatch.filter(file_paths, path) for path in self.data_paths
-        ]
-        return [item for sublist in unflattened_list for item in sublist]
+        # use of extend is readable and not meant to be performant
+        commit = self.get_commit()
+        if commit is None:
+            expanded_paths = []
+            for ptrn in self.data_paths:
+                expanded_paths.extend(glob.glob(ptrn))
+            return expanded_paths
+        else:
+            blob_paths = [
+                obj.path
+                for obj in commit.tree.traverse()
+                if isinstance(obj, Blob)
+            ]
+            expanded_paths = []
+            for ptrn in self.data_paths:
+                expanded_paths.extend(fnmatch.filter(str(blob_paths), ptrn))
+            return expanded_paths
 
     def get_data_iter(self) -> Iterator[Tuple[str, str]]:
-        # TODO: Clean this awful control structure up
-        for path in self.expand_paths():
-            if self.dataset_commit is None:
-                working_tree = self.get_repo().working_tree_dir
-                if working_tree is not None:
-                    full_path = Path(working_tree) / path
-                    with open(full_path, "r", encoding="utf-8") as file:
-                        data = file.read()
-                else:
-                    raise ValueError("Bare repositories not supported")
-            else:
+        commit = self.get_commit()
+        if commit is None:
+            for path in self.expand_paths():
+                with open(path, "r", encoding="utf-8") as file:
+                    data = file.read()
+                yield (path, data)
+        else:
+            for path in self.expand_paths():
                 data = (
-                    self
-                    .get_commit()
+                    commit
                     .tree[path]
-                    .data_stream
                     .read()
                     .decode("utf-8")
                 )
-            yield (path, data)
+                yield (path, data)
 
 
 @serde
