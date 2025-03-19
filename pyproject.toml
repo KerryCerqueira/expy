@@ -20,5 +20,21 @@ requires-python = ">=3.12"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.ruff]
+line-length = 79
+
+[tool.ruff.format]
+indent-style = "tab"
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B", "Q", "D", "W", "UP", "DOC"]
+ignore = ["D206", "W191"]
+
+[tool.ruff.lint.pycodestyle]
+max-doc-length = 72
+ignore-overlong-task-comments = true
+
 [project.scripts]
 expy = "expy.cli:expy"
+
