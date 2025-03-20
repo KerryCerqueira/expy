@@ -107,13 +107,13 @@ class DataSpec:
             return expanded_paths
         else:
             blob_paths = [
-                obj.path
+                str(obj.path)
                 for obj in commit.tree.traverse()
                 if isinstance(obj, Blob)
             ]
             expanded_paths = []
             for ptrn in self.data_paths:
-                expanded_paths.extend(fnmatch.filter(str(blob_paths), ptrn))
+                expanded_paths.extend(fnmatch.filter(blob_paths, ptrn))
             return expanded_paths
 
     def get_data_iter(self) -> Iterator[tuple[str, str]]:
@@ -133,7 +133,7 @@ class DataSpec:
                 yield (path, data)
         else:
             for path in self._expand_paths():
-                data = commit.tree[path].read().decode("utf-8")
+                data = commit.tree[path].data_stream.read().decode("utf-8")
                 yield (path, data)
 
 
@@ -314,7 +314,7 @@ class LibOutputPipeSpec:
 
     lib_fn: str = field(kw_only=True)
     kwargs: dict[str, Any] | None = field(kw_only=True, default=None)
-    _pipeline_fn: Callable[..., str] = field(
+    _pipeline_fn: Callable[..., None] = field(
         skip=True,
         init=False,
         repr=False
@@ -326,15 +326,11 @@ class LibOutputPipeSpec:
 
     def __post_init__(self) -> None:
         """Finish initializing this ``LibOutputPipeSpec``."""
-        self._pipeline_fn = getattr(LibInputPipeSpec._input_lib, self.lib_fn)
+        self._pipeline_fn = getattr(LibOutputPipeSpec._output_lib, self.lib_fn)
 
-    def __call__(self, data: dict[str, Any]) -> str:
-        """Evaluate this output pipeline on a single piece of data.
-
-        :param data: The input data.
-        :return: The pipeline output.
-        """
-        return self._pipeline_fn(data, **(self.kwargs or {}))
+    def run(self) -> None:
+        """Run the pipeline by evaluating the specified function."""
+        return self._pipeline_fn(**(self.kwargs or {}))
 
 
 @serde
@@ -350,7 +346,7 @@ class NotebookPipeSpec:
     notebook_paths: list[Path] = field(kw_only=True)
     kernel: str | None = field(kw_only=True, default=None)
 
-    def __call__(self) -> None:
+    def run(self) -> None:
         """Evaluate this notebook pipeline.
 
         Runs each notebook in the order it was given and writes the
@@ -393,27 +389,6 @@ class Experiment:
         """
         return from_json(Experiment, json_str)
 
-    # def get_hash(self) -> str:
-    #     # TODO: Add input/output module to hash input
-    #     return sha256(to_json(self).encode("utf-8")).hexdigest()
-
-    # def get_output_paths(self) -> list[Path]:
-    #     output_paths = [
-    #         Path("inferences.json"),
-    #         Path("log.txt"),
-    #         Path("experiment.json")
-    #     ]
-    #     if (
-    #         self.post_inference_pipeline is not None
-    #         and self.post_inference_pipeline.notebook_paths is not None
-    #     ):
-    #         output_paths.extend([
-    #             Path(path.name)
-    #             for path in self.post_inference_pipeline.notebook_paths
-    #         ])
-    #     return output_paths
-
-
     def run(self) -> None:
         """Run the experiment."""
         # TODO: Add exception when output dir files exist
@@ -428,3 +403,5 @@ class Experiment:
             )
         with open("inferences.json", "w") as inferences_file:
             inferences_file.write(to_json(output))
+        for pipe in self.post_inference_pipeline:
+            pipe.run()
