@@ -98,7 +98,7 @@ the output directory.
     "data_repo_path": "data",
     "data_commit": "HEAD",
     "data_paths": [ "*.txt" ],
-    "pre_inference_pipeline": { "lib_fn": "id" },
+    "pre_inference_pipeline": { "lib_fn": "idty" },
     "inference_pipeline": { "model_path": "models/phi-2.Q2_K.gguf" },
     "post_inference_pipeline": [
         { "lib_fn": "hello_world" },

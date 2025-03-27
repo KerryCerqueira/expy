@@ -13,7 +13,7 @@ from typing import Any, ClassVar
 import nbclient
 import nbformat
 from git import Blob, Commit, Repo
-from llama_cpp import CreateCompletionResponse, Llama
+from llama_cpp import CreateChatCompletionResponse, CreateCompletionResponse, Llama, ChatCompletionRequestMessage
 from serde import Untagged, field, serde
 from serde.json import from_json, to_json
 
@@ -139,27 +139,29 @@ class DataSpec:
 
 @serde
 class InputPipeSpec(abc.ABC):
-    """An abstract specification for a pre-inference data pipeline.
+	"""An abstract specification for a pre-inference data pipeline.
 
-    :param kwargs: Keyword arguments passed to the pipeline function.
-    :param _pipeline_fn: The function to be called.
-    """
+	:param kwargs: Keyword arguments passed to the pipeline function.
+	:param _pipeline_fn: The function to be called.
+	"""
 
-    kwargs: dict[str, Any] | None = field(default=None, kw_only=True)
-    _pipeline_fn: Callable[..., str] = field(skip=True, init=False, repr=False)
+	kwargs: dict[str, Any] | None = field(default=None, kw_only=True)
+	_pipeline_fn: (
+		Callable[..., str] | Callable[..., list[ChatCompletionRequestMessage]]
+	) = field(skip=True, init=False, repr=False)
 
-    @abc.abstractmethod
-    def __post_init__(self) -> None:
-        """Finishes initializing this input pipeline."""
-        ...
+	@abc.abstractmethod
+	def __post_init__(self) -> None:
+		"""Finishes initializing this input pipeline."""
+		...
 
-    def __call__(self, data: str) -> str:
-        """Evaluate the data pipeline on a single piece of data.
+	def __call__(self, data: str) -> str | list[ChatCompletionRequestMessage]:
+		"""Evaluate the data pipeline on a single piece of data.
 
-        :param data: Text input for the pipeline.
-        :return: The output of the pipeline.
-        """
-        return self._pipeline_fn(data, **(self.kwargs or {}))
+		:param data: Text input for the pipeline.
+		:return: The output of the pipeline.
+		"""
+		return self._pipeline_fn(data, **(self.kwargs or {}))
 
 
 @serde
@@ -216,13 +218,13 @@ class ModelSpec(abc.ABC):
     """An abstract specification for a model inference pipeline.
 
     :param kwargs: keyword arguments passed along to the pipeline.
-    :param _pipeline_fn: A `llama_cpp_python`` ``Llama`` object
+    :param _pipeline_fn: A ``llama_cpp_python`` ``Llama`` object
     representing the model, or ``None`` if it hasn't been
     initialized.
     """
 
     kwargs: dict[str, Any] | None = field(kw_only=True, default=None)
-    _pipeline_fn: Llama | None = field(
+    _model: Llama | None = field(
         skip=True,
         init=False,
         repr=False,
@@ -232,7 +234,10 @@ class ModelSpec(abc.ABC):
     @abc.abstractmethod
     def _init_model(self) -> None: ...
 
-    def __call__(self, data: str, **kwargs) -> CreateCompletionResponse:
+    def __call__(
+        self,
+        data: str | list[ChatCompletionRequestMessage],
+    ) -> CreateCompletionResponse | CreateChatCompletionResponse:
         """Evaluate the inference pipeline on a single input.
 
         :param data: The input text to provide inference on.
@@ -243,10 +248,13 @@ class ModelSpec(abc.ABC):
         # TODO: Redirect llama output to log file
         # TODO: Intercept keyword arguments early that produce a
         # streaming response, either fail or change/warn
-        if self._pipeline_fn is None:
+        if self._model is None:
             self._init_model()
-        assert self._pipeline_fn is not None
-        response = self._pipeline_fn(data, **kwargs)
+        assert self._model is not None
+        if isinstance(data, str):
+            response = self._model(data)
+        else:
+            response = self._model.create_chat_completion(data)
         if isinstance(response, Iterator):
             raise ValueError("Streaming responses not supported")
         else:
@@ -271,8 +279,8 @@ class LocalModelSpec(ModelSpec):
         :raises ValueError: If the model has already been initialized.
         """
         # TODO: Add exception handling, precheck model spec
-        if self._pipeline_fn is None:
-            self._pipeline_fn = Llama(
+        if self._model is None:
+            self._model = Llama(
                 str(self.model_path), **(self.kwargs or {})
             )
         else:
@@ -293,8 +301,8 @@ class HFModelSpec(ModelSpec):
 
     def _init_model(self) -> None:
         # TODO: Add exception handling, precheck model spec
-        if self._pipeline_fn is not None:
-            self._pipeline_fn = Llama.from_pretrained(
+        if self._model is not None:
+            self._model = Llama.from_pretrained(
                 repo_id=self.repo_id,
                 filename=self.filename,
                 **(self.kwargs or {}),
