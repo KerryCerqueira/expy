@@ -5,6 +5,7 @@ import glob
 import importlib
 import importlib.util
 from collections.abc import Callable, Iterator
+
 # from hashlib import sha256
 from pathlib import Path
 from types import ModuleType
@@ -13,13 +14,16 @@ from typing import Any, ClassVar
 import nbclient
 import nbformat
 from git import Blob, Commit, Repo
-from llama_cpp import CreateChatCompletionResponse, CreateCompletionResponse, Llama, ChatCompletionRequestMessage
-from serde import Untagged, field, serde
-from serde.json import from_json, to_json
+from llama_cpp import (
+    ChatCompletionRequestMessage,
+    CreateChatCompletionResponse,
+    CreateCompletionResponse,
+    Llama,
+)
+from pydantic import BaseModel, Field, PrivateAttr
 
 
-@serde
-class DataSpec:
+class DataSpec(BaseModel):
     """A specification of input data for an experiment.
 
     :param data_commit: The commit containing the input data.
@@ -30,9 +34,9 @@ class DataSpec:
     :param data_repo_path: A path to the data repository.
     """
 
-    data_commit: str | None = field(kw_only=True, default=None)
-    data_paths: list[str] = field(kw_only=True)
-    data_repo_path: Path | None = field(kw_only=True, default=None)
+    data_commit: str | None = Field(kw_only=True, default=None)
+    data_paths: list[str] = Field(kw_only=True)
+    data_repo_path: Path | None = Field(kw_only=True, default=None)
 
     def __post_init__(self):
         """Finish initializing this ``DataSpec``.
@@ -137,18 +141,17 @@ class DataSpec:
                 yield (path, data)
 
 
-@serde
-class InputPipeSpec(abc.ABC):
+class InputPipeSpec(abc.ABC, BaseModel):
 	"""An abstract specification for a pre-inference data pipeline.
 
 	:param kwargs: Keyword arguments passed to the pipeline function.
 	:param _pipeline_fn: The function to be called.
 	"""
 
-	kwargs: dict[str, Any] | None = field(default=None, kw_only=True)
+	kwargs: dict[str, Any] | None = Field(default=None, kw_only=True)
 	_pipeline_fn: (
 		Callable[..., str] | Callable[..., list[ChatCompletionRequestMessage]]
-	) = field(skip=True, init=False, repr=False)
+	) = PrivateAttr()
 
 	@abc.abstractmethod
 	def __post_init__(self) -> None:
@@ -164,7 +167,6 @@ class InputPipeSpec(abc.ABC):
 		return self._pipeline_fn(data, **(self.kwargs or {}))
 
 
-@serde
 class LibInputPipeSpec(InputPipeSpec):
     """Spec for a pre-inference pipeline based on a library function.
 
@@ -176,7 +178,7 @@ class LibInputPipeSpec(InputPipeSpec):
     ``self.lib_fn`` after initialization.
     """
 
-    lib_fn: str = field(kw_only=True)
+    lib_fn: str = Field(kw_only=True)
     _input_lib: ClassVar[ModuleType] = importlib.import_module(
         ".pipelines.input", package=__package__
     )
@@ -187,7 +189,6 @@ class LibInputPipeSpec(InputPipeSpec):
         self._pipeline_fn = getattr(LibInputPipeSpec._input_lib, self.lib_fn)
 
 
-@serde
 class CustomInputPipeSpec(InputPipeSpec):
     """Spec for a pre-inference pipeline based on a given python module.
 
@@ -196,8 +197,8 @@ class CustomInputPipeSpec(InputPipeSpec):
     this input pipeline is evaluated.
     """
 
-    module: Path = field(kw_only=True)
-    fn_name: str = field(kw_only=True, default="input_pipeline")
+    module: Path = Field(kw_only=True)
+    fn_name: str = Field(kw_only=True, default="input_pipeline")
 
     def __post_init__(self) -> None:
         """Finishes initializing this input pipeline."""
@@ -212,9 +213,7 @@ class CustomInputPipeSpec(InputPipeSpec):
         spec.loader.exec_module(module)
         self._pipeline_fn = getattr(module, self.fn_name)
 
-
-@serde
-class ModelSpec(abc.ABC):
+class ModelSpec(abc.ABC, BaseModel):
     """An abstract specification for a model inference pipeline.
 
     :param kwargs: keyword arguments passed along to the pipeline.
@@ -223,13 +222,8 @@ class ModelSpec(abc.ABC):
     initialized.
     """
 
-    kwargs: dict[str, Any] | None = field(kw_only=True, default=None)
-    _model: Llama | None = field(
-        skip=True,
-        init=False,
-        repr=False,
-        default=None,
-    )
+    kwargs: dict[str, Any] | None = Field(kw_only=True, default=None)
+    _model: Llama | None = PrivateAttr()
 
     @abc.abstractmethod
     def _init_model(self) -> None: ...
@@ -261,7 +255,6 @@ class ModelSpec(abc.ABC):
             return response
 
 
-@serde
 class LocalModelSpec(ModelSpec):
     """A spec for a pipeline based on a local model.
 
@@ -269,7 +262,7 @@ class LocalModelSpec(ModelSpec):
     ``llama_cpp_python``.
     """
 
-    model_path: Path = field(kw_only=True)
+    model_path: Path = Field(kw_only=True)
 
     def _init_model(self) -> None:
         """Initialize inference pipeline.
@@ -287,7 +280,6 @@ class LocalModelSpec(ModelSpec):
             raise ValueError("Model already initialized")
 
 
-@serde
 class HFModelSpec(ModelSpec):
     """A spec for a pipeline based on a huggingface model.
 
@@ -296,8 +288,8 @@ class HFModelSpec(ModelSpec):
     repository.
     """
 
-    repo_id: str = field(kw_only=True)
-    filename: str = field(kw_only=True)
+    repo_id: str = Field(kw_only=True)
+    filename: str = Field(kw_only=True)
 
     def _init_model(self) -> None:
         # TODO: Add exception handling, precheck model spec
@@ -311,8 +303,7 @@ class HFModelSpec(ModelSpec):
             raise ValueError("Model already initialized")
 
 
-@serde
-class LibOutputPipeSpec:
+class LibOutputPipeSpec(BaseModel):
     """Spec for a post-inference pipeline based on a library function.
 
     :param lib_fn: The name of the library function.
@@ -320,13 +311,9 @@ class LibOutputPipeSpec:
     :param _pipeline_fn: The function to be called.
     """
 
-    lib_fn: str = field(kw_only=True)
-    kwargs: dict[str, Any] | None = field(kw_only=True, default=None)
-    _pipeline_fn: Callable[..., None] = field(
-        skip=True,
-        init=False,
-        repr=False
-    )
+    lib_fn: str = Field(kw_only=True)
+    kwargs: dict[str, Any] | None = Field(kw_only=True, default=None)
+    _pipeline_fn: Callable[..., None] = PrivateAttr()
     # TODO: Couldn't we import this with a standard non-dynamic mechanism?
     _output_lib: ClassVar[ModuleType] = importlib.import_module(
         ".pipelines.output", package=__package__
@@ -341,8 +328,7 @@ class LibOutputPipeSpec:
         return self._pipeline_fn(**(self.kwargs or {}))
 
 
-@serde
-class NotebookPipeSpec:
+class NotebookPipeSpec(BaseModel):
     """Spec for a post-inference pipeline based on a jupyter notebook.
 
     :param notebook_paths: Paths to jupyter notebooks.
@@ -351,8 +337,8 @@ class NotebookPipeSpec:
     """
 
     #TODO: This should return notebook objects, not write them to disk.
-    notebook_paths: list[Path] = field(kw_only=True)
-    kernel: str | None = field(kw_only=True, default=None)
+    notebook_paths: list[Path] = Field(kw_only=True)
+    kernel: str | None = Field(kw_only=True, default=None)
 
     def run(self) -> None:
         """Evaluate this notebook pipeline.
@@ -367,8 +353,7 @@ class NotebookPipeSpec:
             nbformat.write(nb, nb_path.name)
 
 
-@serde(tagging=Untagged)
-class Experiment:
+class Experiment(BaseModel):
     """A specification for an AI experiment.
 
     At a high level, an ``Experiment`` consists of specifications for
@@ -379,37 +364,37 @@ class Experiment:
     which an experiment can be deserialized from.
     """
 
-    dataset: DataSpec = field(kw_only=True, flatten=True)
-    pre_inference_pipeline: LibInputPipeSpec | CustomInputPipeSpec = field(
+    dataset: DataSpec = Field(kw_only=True)
+    pre_inference_pipeline: LibInputPipeSpec | CustomInputPipeSpec = Field(
         kw_only=True, default_factory=lambda: LibInputPipeSpec(lib_fn="id")
     )
-    inference_pipeline: LocalModelSpec | HFModelSpec = field(kw_only=True)
+    inference_pipeline: LocalModelSpec | HFModelSpec = Field(kw_only=True)
     post_inference_pipeline: list[
         LibOutputPipeSpec | NotebookPipeSpec
-    ] = field(kw_only=True, default_factory=list)
+    ] = Field(kw_only=True, default_factory=list)
 
-    @staticmethod
-    def from_json(json_str: str) -> "Experiment":
-        """Initialize an ``Experiment`` from a json string.
+    # @staticmethod
+    # def from_json(json_str: str) -> "Experiment":
+    #     """Initialize an ``Experiment`` from a json string.
+    #
+    #     :param json_str: A json string to be deserialized.
+    #     :return: The ``Experiment`` encoded by the input json.
+    #     """
+    #     return from_json(Experiment, json_str)
 
-        :param json_str: A json string to be deserialized.
-        :return: The ``Experiment`` encoded by the input json.
-        """
-        return from_json(Experiment, json_str)
-
-    def run(self) -> None:
-        """Run the experiment."""
-        # TODO: Add exception when output dir files exist
-        # TODO: Add logging
-        # TODO: Add post inference computation
-        # TODO: Add input to run in given directory
-        data_iter = self.dataset.get_data_iter()
-        output = {}
-        for path, data in data_iter:
-            output[path] = self.inference_pipeline(
-                self.pre_inference_pipeline(data)
-            )
-        with open("inferences.json", "w") as inferences_file:
-            inferences_file.write(to_json(output))
-        for pipe in self.post_inference_pipeline:
-            pipe.run()
+    # def run(self) -> None:
+    #     """Run the experiment."""
+    #     # TODO: Add exception when output dir files exist
+    #     # TODO: Add logging
+    #     # TODO: Add post inference computation
+    #     # TODO: Add input to run in given directory
+    #     data_iter = self.dataset.get_data_iter()
+    #     output = {}
+    #     for path, data in data_iter:
+    #         output[path] = self.inference_pipeline(
+    #             self.pre_inference_pipeline(data)
+    #         )
+    #     with open("inferences.json", "w") as inferences_file:
+    #         inferences_file.write(to_json(output))
+    #     for pipe in self.post_inference_pipeline:
+    #         pipe.run()
