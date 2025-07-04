@@ -4,23 +4,17 @@ import fnmatch
 import glob
 import importlib
 import importlib.util
-from collections.abc import Callable, Iterator
-
-# from hashlib import sha256
+import json
+from collections.abc import Callable, Iterator, MutableMapping
 from pathlib import Path
 from types import ModuleType
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Self
 
 import nbclient
 import nbformat
 from git import Blob, Commit, Repo
-from llama_cpp import (
-    ChatCompletionRequestMessage,
-    CreateChatCompletionResponse,
-    CreateCompletionResponse,
-    Llama,
-)
-from pydantic import BaseModel, Field, PrivateAttr
+from langgraph.graph.state import CompiledStateGraph
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 
 class DataSpec(BaseModel):
@@ -38,7 +32,9 @@ class DataSpec(BaseModel):
     data_paths: list[str] = Field(kw_only=True)
     data_repo_path: Path | None = Field(kw_only=True, default=None)
 
-    def __post_init__(self):
+
+    @model_validator(mode= "after")
+    def foo(self) -> Self:
         """Finish initializing this ``DataSpec``.
 
         :raises ValueError: When a data repository is not specified but
@@ -52,8 +48,9 @@ class DataSpec(BaseModel):
             raise ValueError(
                 "Must specify a data repository when specifying a commit"
             )
+        return self
 
-    def _get_repo(self) -> Repo | None:
+    def get_repo(self) -> Repo | None:
         """Get the repository specified by this ``DataSpec``.
 
         :return: A ``GitPython`` ``Repo`` object, or ``None`` if none is
@@ -61,8 +58,7 @@ class DataSpec(BaseModel):
         """
         if self.data_repo_path is None:
             return None
-        else:
-            return Repo(self.data_repo_path)
+        return Repo(self.data_repo_path)
 
     def has_repo(self) -> bool:
         """Whether a valid repository exists for this ``DataSpec``.
@@ -70,29 +66,28 @@ class DataSpec(BaseModel):
         :return: ``True`` if a git repository is found at
         ``self.data_repo_path``.
         """
-        return self._get_repo() is not None
+        return self.get_repo() is not None
 
-    def _get_commit(self) -> Commit | None:
+    def get_commit(self) -> Commit | None:
         """Get the commit specified by this ``DataSpec``.
 
         :return: A ``GitPython`` ``commit`` object, or ``None`` if one
         is not found.
         """
-        repo = self._get_repo()
+        repo = self.get_repo()
         if self.data_commit is None or repo is None:
             return None
-        else:
-            return repo.commit(self.data_commit)
+        return repo.commit(self.data_commit)
 
-    def _has_commit(self) -> bool:
+    def has_commit(self) -> bool:
         """Whether a valid commit exists for this ``DataSpec``.
 
         :return: ``True`` if a repository is found with a commit
         matching ``self.data_commit``.
         """
-        return self._get_commit is not None
+        return self.get_commit is not None
 
-    def _expand_paths(self) -> list[str]:
+    def get_matching_paths(self) -> list[str]:
         """Expand globs in ``self.data_paths``.
 
         Patterns are expanded to matching paths in the input data.
@@ -102,23 +97,22 @@ class DataSpec(BaseModel):
         ``self.has_repo()`` is ``False``, or otherwise relative to the
         repository tree.
         """
-		# use of extend is readable and not meant to be performant
-        commit = self._get_commit()
+        # use of extend is readable and not meant to be performant
+        commit = self.get_commit()
         if commit is None:
             expanded_paths = []
             for ptrn in self.data_paths:
                 expanded_paths.extend(glob.glob(ptrn))
             return expanded_paths
-        else:
-            blob_paths = [
-                str(obj.path)
-                for obj in commit.tree.traverse()
-                if isinstance(obj, Blob)
-            ]
-            expanded_paths = []
-            for ptrn in self.data_paths:
-                expanded_paths.extend(fnmatch.filter(blob_paths, ptrn))
-            return expanded_paths
+        blob_paths = [
+            str(obj.path)
+            for obj in commit.tree.traverse()
+            if isinstance(obj, Blob)
+        ]
+        expanded_paths = []
+        for ptrn in self.data_paths:
+            expanded_paths.extend(fnmatch.filter(blob_paths, ptrn))
+        return expanded_paths
 
     def get_data_iter(self) -> Iterator[tuple[str, str]]:
         """Get an iterator over the data specified by this ``DataSpec``.
@@ -129,42 +123,35 @@ class DataSpec(BaseModel):
         repository, or relative to the current working directory
         depending on whether a data repository was specified or not.
         """
-        commit = self._get_commit()
+        commit = self.get_commit()
         if commit is None:
-            for path in self._expand_paths():
+            for path in self.get_matching_paths():
                 with open(path, encoding="utf-8") as file:
                     data = file.read()
                 yield (path, data)
         else:
-            for path in self._expand_paths():
+            for path in self.get_matching_paths():
                 data = commit.tree[path].data_stream.read().decode("utf-8")
                 yield (path, data)
 
 
 class InputPipeSpec(abc.ABC, BaseModel):
-	"""An abstract specification for a pre-inference data pipeline.
+    """An abstract specification for a pre-inference data pipeline.
 
-	:param kwargs: Keyword arguments passed to the pipeline function.
-	:param _pipeline_fn: The function to be called.
-	"""
+    :param kwargs: Keyword arguments passed to the pipeline function.
+    :param _pipeline_fn: The function to be called.
+    """
 
-	kwargs: dict[str, Any] | None = Field(default=None, kw_only=True)
-	_pipeline_fn: (
-		Callable[..., str] | Callable[..., list[ChatCompletionRequestMessage]]
-	) = PrivateAttr()
+    kwargs: dict[str, Any] | None = Field(default=None, kw_only=True)
+    _pipeline_fn: Callable[..., MutableMapping[str, Any]] = PrivateAttr()
 
-	@abc.abstractmethod
-	def __post_init__(self) -> None:
-		"""Finishes initializing this input pipeline."""
-		...
+    def __call__(self, data: str) -> MutableMapping[str, Any]:
+        """Evaluate the data pipeline on a single piece of data.
 
-	def __call__(self, data: str) -> str | list[ChatCompletionRequestMessage]:
-		"""Evaluate the data pipeline on a single piece of data.
-
-		:param data: Text input for the pipeline.
-		:return: The output of the pipeline.
-		"""
-		return self._pipeline_fn(data, **(self.kwargs or {}))
+        :param data: Text input for the pipeline.
+        :return: The output of the pipeline.
+        """
+        return self._pipeline_fn(data, **(self.kwargs or {}))
 
 
 class LibInputPipeSpec(InputPipeSpec):
@@ -183,10 +170,10 @@ class LibInputPipeSpec(InputPipeSpec):
         ".pipelines.input", package=__package__
     )
 
-    def __post_init__(self) -> None:
-        """Finishes initializing this input pipeline."""
-        # TODO: Add exception handling
+    @model_validator(mode="after")
+    def bind_pipeline_fn(self) -> Self:
         self._pipeline_fn = getattr(LibInputPipeSpec._input_lib, self.lib_fn)
+        return self
 
 
 class CustomInputPipeSpec(InputPipeSpec):
@@ -200,108 +187,59 @@ class CustomInputPipeSpec(InputPipeSpec):
     module: Path = Field(kw_only=True)
     fn_name: str = Field(kw_only=True, default="input_pipeline")
 
-    def __post_init__(self) -> None:
-        """Finishes initializing this input pipeline."""
-        # TODO: Add exception handling
+    @model_validator(mode="after")
+    def bind_pipeline_fn(self) -> Self:
+        """Load `self.module`, bind `self.fn_name`, and return `self`."""
+        try:
+            spec = importlib.util.spec_from_file_location(
+                self.module.stem, self.module
+            )
+            if spec is None or spec.loader is None:
+                raise FileNotFoundError
+            module: ModuleType = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                f"File not found: {self.module}"
+            ) from None
+        except SyntaxError:
+            raise ImportError(
+                f"{self.module} contains invalid Python"
+            ) from None
+        try:
+            self._pipeline_fn = getattr(module, self.fn_name)
+        except AttributeError:
+            raise AttributeError(
+                f"`{self.fn_name}` not found in module {self.module}"
+            ) from None
+        return self
+
+
+class CustomGraphSpec(BaseModel):
+    module: Path = Field(kw_only=True)
+    fn_name: str = Field(kw_only=True, default="inference_pipeline")
+    kwargs: dict[str, Any] | None = Field(kw_only=True, default=None)
+    _state_graph: CompiledStateGraph = PrivateAttr()
+
+    @model_validator(mode="after")
+    def compile_graph(self) -> Self:
+        """Load `self.module`, bind `self.fn_name`, and return `self`."""
         spec = importlib.util.spec_from_file_location(
             self.module.stem, self.module
         )
-        assert (
-            spec is not None and spec.loader is not None
-        ), f"{self.module} not found"
+        if spec is None or spec.loader is None:
+            raise FileNotFoundError
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        self._pipeline_fn = getattr(module, self.fn_name)
-
-class ModelSpec(abc.ABC, BaseModel):
-    """An abstract specification for a model inference pipeline.
-
-    :param kwargs: keyword arguments passed along to the pipeline.
-    :param _pipeline_fn: A ``llama_cpp_python`` ``Llama`` object
-    representing the model, or ``None`` if it hasn't been
-    initialized.
-    """
-
-    kwargs: dict[str, Any] | None = Field(kw_only=True, default=None)
-    _model: Llama | None = PrivateAttr()
-
-    @abc.abstractmethod
-    def _init_model(self) -> None: ...
+        self._state_graph = getattr(module, self.fn_name)(
+            **(self.kwargs or {}),
+        ).compile()
+        return self
 
     def __call__(
-        self,
-        data: str | list[ChatCompletionRequestMessage],
-    ) -> CreateCompletionResponse | CreateChatCompletionResponse:
-        """Evaluate the inference pipeline on a single input.
-
-        :param data: The input text to provide inference on.
-        :raises ValueError: If keyword arguments are passed that produce
-        a streaming response.
-        :return: The result of the model inference.
-        """
-        # TODO: Redirect llama output to log file
-        # TODO: Intercept keyword arguments early that produce a
-        # streaming response, either fail or change/warn
-        if self._model is None:
-            self._init_model()
-        assert self._model is not None
-        if isinstance(data, str):
-            response = self._model(data)
-        else:
-            response = self._model.create_chat_completion(data)
-        if isinstance(response, Iterator):
-            raise ValueError("Streaming responses not supported")
-        else:
-            return response
-
-
-class LocalModelSpec(ModelSpec):
-    """A spec for a pipeline based on a local model.
-
-    :param model_path: A path to a model to be passed loaded with
-    ``llama_cpp_python``.
-    """
-
-    model_path: Path = Field(kw_only=True)
-
-    def _init_model(self) -> None:
-        """Initialize inference pipeline.
-
-        This should generally be called lazily after initialization.
-
-        :raises ValueError: If the model has already been initialized.
-        """
-        # TODO: Add exception handling, precheck model spec
-        if self._model is None:
-            self._model = Llama(
-                str(self.model_path), **(self.kwargs or {})
-            )
-        else:
-            raise ValueError("Model already initialized")
-
-
-class HFModelSpec(ModelSpec):
-    """A spec for a pipeline based on a huggingface model.
-
-    :param repo_id: A HFHub repository.
-    :param filename: The filename of the model as stored in the
-    repository.
-    """
-
-    repo_id: str = Field(kw_only=True)
-    filename: str = Field(kw_only=True)
-
-    def _init_model(self) -> None:
-        # TODO: Add exception handling, precheck model spec
-        if self._model is not None:
-            self._model = Llama.from_pretrained(
-                repo_id=self.repo_id,
-                filename=self.filename,
-                **(self.kwargs or {}),
-            )
-        else:
-            raise ValueError("Model already initialized")
-
+        self, state: MutableMapping[str, Any]
+    ) -> MutableMapping[str, Any]:
+        return self._state_graph.invoke(state)
 
 class LibOutputPipeSpec(BaseModel):
     """Spec for a post-inference pipeline based on a library function.
@@ -319,9 +257,10 @@ class LibOutputPipeSpec(BaseModel):
         ".pipelines.output", package=__package__
     )
 
-    def __post_init__(self) -> None:
-        """Finish initializing this ``LibOutputPipeSpec``."""
+    @model_validator(mode="after")
+    def bind_pipeline_fn(self) -> Self:
         self._pipeline_fn = getattr(LibOutputPipeSpec._output_lib, self.lib_fn)
+        return self
 
     def run(self) -> None:
         """Run the pipeline by evaluating the specified function."""
@@ -354,47 +293,36 @@ class NotebookPipeSpec(BaseModel):
 
 
 class Experiment(BaseModel):
-    """A specification for an AI experiment.
+	"""A specification for an AI experiment.
 
-    At a high level, an ``Experiment`` consists of specifications for
-    data together with pipelines for pre-inference, inference, and
-    post-inference computations. Each of these can be optionally
-    specified to guarantee reproducibility of the experiment via hashes
-    of the inputs. These are encoded by a json of a prescribed schema
-    which an experiment can be deserialized from.
-    """
+	At a high level, an ``Experiment`` consists of specifications for
+	data together with pipelines for pre-inference, inference, and
+	post-inference computations. Each of these can be optionally
+	specified to guarantee reproducibility of the experiment via hashes
+	of the inputs. These are encoded by a json of a prescribed schema
+	which an experiment can be deserialized from.
+	"""
 
-    dataset: DataSpec = Field(kw_only=True)
-    pre_inference_pipeline: LibInputPipeSpec | CustomInputPipeSpec = Field(
-        kw_only=True, default_factory=lambda: LibInputPipeSpec(lib_fn="id")
-    )
-    inference_pipeline: LocalModelSpec | HFModelSpec = Field(kw_only=True)
-    post_inference_pipeline: list[
-        LibOutputPipeSpec | NotebookPipeSpec
-    ] = Field(kw_only=True, default_factory=list)
+	dataset: DataSpec = Field(kw_only=True)
+	pre_inference_pipeline: LibInputPipeSpec | CustomInputPipeSpec = Field(
+		kw_only=True, default_factory=lambda: LibInputPipeSpec(lib_fn="id")
+	)
+	inference_pipeline: CustomGraphSpec = Field(kw_only=True)
+	post_inference_pipeline: list[LibOutputPipeSpec | NotebookPipeSpec] = (
+		Field(kw_only=True, default_factory=list)
+	)
 
-    # @staticmethod
-    # def from_json(json_str: str) -> "Experiment":
-    #     """Initialize an ``Experiment`` from a json string.
-    #
-    #     :param json_str: A json string to be deserialized.
-    #     :return: The ``Experiment`` encoded by the input json.
-    #     """
-    #     return from_json(Experiment, json_str)
-
-    # def run(self) -> None:
-    #     """Run the experiment."""
-    #     # TODO: Add exception when output dir files exist
-    #     # TODO: Add logging
-    #     # TODO: Add post inference computation
-    #     # TODO: Add input to run in given directory
-    #     data_iter = self.dataset.get_data_iter()
-    #     output = {}
-    #     for path, data in data_iter:
-    #         output[path] = self.inference_pipeline(
-    #             self.pre_inference_pipeline(data)
-    #         )
-    #     with open("inferences.json", "w") as inferences_file:
-    #         inferences_file.write(to_json(output))
-    #     for pipe in self.post_inference_pipeline:
-    #         pipe.run()
+	def run(self) -> None:
+		"""Run the experiment."""
+		# TODO: Add exception when output dir files exist
+		# TODO: Add logging
+		# TODO: Add input to run in given directory
+		output = {}
+		for path, data in self.dataset.get_data_iter():
+			output[path] = self.inference_pipeline(
+				self.pre_inference_pipeline(data)
+			)
+		with open("inferences.json", "w") as inferences_file:
+			inferences_file.write(json.dumps(output))
+		for pipe in self.post_inference_pipeline:
+			pipe.run()
