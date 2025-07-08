@@ -216,7 +216,7 @@ class CustomInputPipeSpec(InputPipeSpec):
 
 
 class CustomGraphSpec(BaseModel):
-    module: Path = Field(kw_only=True)
+    module: Path = Field(kw_only=True, default=Path("exp.py"))
     fn_name: str = Field(kw_only=True, default="inference_pipeline")
     kwargs: dict[str, Any] | None = Field(kw_only=True, default=None)
     _state_graph: CompiledStateGraph = PrivateAttr()
@@ -259,7 +259,10 @@ class LibOutputPipeSpec(BaseModel):
 
     @model_validator(mode="after")
     def bind_pipeline_fn(self) -> Self:
-        self._pipeline_fn = getattr(LibOutputPipeSpec._output_lib, self.lib_fn)
+        self._pipeline_fn = getattr(
+            LibOutputPipeSpec._output_lib,
+            self.lib_fn
+        )
         return self
 
     def run(self) -> None:
@@ -293,36 +296,46 @@ class NotebookPipeSpec(BaseModel):
 
 
 class Experiment(BaseModel):
-	"""A specification for an AI experiment.
+    """A specification for an AI experiment.
 
-	At a high level, an ``Experiment`` consists of specifications for
-	data together with pipelines for pre-inference, inference, and
-	post-inference computations. Each of these can be optionally
-	specified to guarantee reproducibility of the experiment via hashes
-	of the inputs. These are encoded by a json of a prescribed schema
-	which an experiment can be deserialized from.
-	"""
+    At a high level, an ``Experiment`` consists of specifications for
+    data together with pipelines for pre-inference, inference, and
+    post-inference computations. Each of these can be optionally
+    specified to guarantee reproducibility of the experiment via hashes
+    of the inputs. These are encoded by a json of a prescribed schema
+    which an experiment can be deserialized from.
+    """
 
-	dataset: DataSpec = Field(kw_only=True)
-	pre_inference_pipeline: LibInputPipeSpec | CustomInputPipeSpec = Field(
-		kw_only=True, default_factory=lambda: LibInputPipeSpec(lib_fn="id")
-	)
-	inference_pipeline: CustomGraphSpec = Field(kw_only=True)
-	post_inference_pipeline: list[LibOutputPipeSpec | NotebookPipeSpec] = (
-		Field(kw_only=True, default_factory=list)
-	)
+    dataset: DataSpec = Field(kw_only=True)
+    pre_inference_pipeline: LibInputPipeSpec | CustomInputPipeSpec = Field(
+        kw_only=True,
+        default_factory=lambda: CustomInputPipeSpec(
+            module=Path("exp.py"),
+            fn_name="pre_inference_pipeline",
+        ),
+    )
+    inference_pipeline: CustomGraphSpec = Field(
+        kw_only=True,
+        default_factory=lambda: CustomGraphSpec(
+            module=Path("exp.py"),
+            fn_name="inference_pipeline",
+        ),
+    )
+    post_inference_pipeline: list[LibOutputPipeSpec | NotebookPipeSpec] = (
+        Field(kw_only=True, default_factory=list)
+    )
 
-	def run(self) -> None:
-		"""Run the experiment."""
-		# TODO: Add exception when output dir files exist
-		# TODO: Add logging
-		# TODO: Add input to run in given directory
-		output = {}
-		for path, data in self.dataset.get_data_iter():
-			output[path] = self.inference_pipeline(
-				self.pre_inference_pipeline(data)
-			)
-		with open("inferences.json", "w") as inferences_file:
-			inferences_file.write(json.dumps(output))
-		for pipe in self.post_inference_pipeline:
-			pipe.run()
+    def run(self) -> None:
+        """Run the experiment."""
+        # TODO: Add exception when output dir files exist
+        # TODO: Add logging
+        # TODO: Add input to run in given directory
+        output = {}
+        for path, data in self.dataset.get_data_iter():
+            output[path] = self.inference_pipeline(
+                self.pre_inference_pipeline(data)
+            )
+            with open("inferences.json", "w") as inferences_file:
+                inferences_file.write(json.dumps(output))
+                for pipe in self.post_inference_pipeline:
+                    pipe.run()
