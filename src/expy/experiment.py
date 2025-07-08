@@ -85,7 +85,7 @@ class DataSpec(BaseModel):
         :return: ``True`` if a repository is found with a commit
         matching ``self.data_commit``.
         """
-        return self.get_commit is not None
+        return self.get_commit() is not None
 
     def get_matching_paths(self) -> list[str]:
         """Expand globs in ``self.data_paths``.
