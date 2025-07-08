@@ -32,7 +32,7 @@
 				expy-dev = pkgs.python3.pkgs.mkPythonEditablePackage {
 					pname = "expy";
 					inherit (pyproject.project) scripts version;
-					root = "$PWD/src";
+					root = "$PKG_ROOT/src";
 				};
 			in {
 				packages = {
