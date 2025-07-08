@@ -1,7 +1,10 @@
-from typing import Annotated
-import typer
-from .experiment import Experiment
+import os
 from pathlib import Path
+from typing import Annotated
+
+import typer
+
+from .experiment import Experiment
 
 expy = typer.Typer()
 
@@ -10,8 +13,9 @@ expy = typer.Typer()
 def run(
 	path: Annotated[Path, typer.Argument(default_factory=Path.cwd)],
 ) -> None:
-    path = path / "exp.json" if path.is_dir() else path
-    with open(path) as f:
+    exp_path = path.parent if path.is_file() else path
+    os.chdir(exp_path)
+    with Path.open(Path("exp.json")) as f:
         exp = Experiment.model_validate_json(f.read())
     exp.run()
 
