@@ -13,15 +13,15 @@
 				pkgs = import nixpkgs {
 					system = system;
 				};
-				expy = pkgs.python3Packages.buildPythonPackage {
+				expyFromPkgs = ps: ps.python3Packages.buildPythonPackage {
 					pname = "expy";
 					inherit (pyproject.project) version;
 					format = "pyproject";
 					src = ./.;
-					build-system = with pkgs.python3Packages; [
+					build-system = with ps.python3Packages; [
 						setuptools
 					];
-					propagatedBuildInputs = with pkgs.python3Packages; [
+					propagatedBuildInputs = with ps.python3Packages; [
 						gitpython
 						langgraph
 						nbclient
@@ -29,20 +29,22 @@
 						typer
 					];
 				};
-				expy-dev = pkgs.python3.pkgs.mkPythonEditablePackage {
+				expy = expyFromPkgs pkgs;
+				expyDev = pkgs.python3.pkgs.mkPythonEditablePackage {
 					pname = "expy";
 					inherit (pyproject.project) scripts version;
 					root = "$PKG_ROOT/src";
 				};
 			in {
-				packages = {
-					inherit expy;
+				overlays.default = final: prev: {
+					expy = expyFromPkgs prev;
 				};
+				packages.default = expy;
 				devShells = {
 					default = pkgs.mkShell {
 						inputsFrom = [ expy ];
 						buildInputs = with pkgs; [
-							expy-dev
+							expyDev
 							(python3.withPackages ( ps: with ps; [
 								ipython
 								ipykernel
