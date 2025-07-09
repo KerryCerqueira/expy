@@ -13,7 +13,7 @@
 				pkgs = import nixpkgs {
 					system = system;
 				};
-				expy = pkgs.python3Packages.buildPythonApplication {
+				expy = pkgs.python3Packages.buildPythonPackage {
 					pname = "expy";
 					inherit (pyproject.project) version;
 					format = "pyproject";
