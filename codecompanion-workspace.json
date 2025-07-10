@@ -1,0 +1,99 @@
+{
+	"name": "expy",
+	"version": "0.1.0",
+	"system_prompt": "You are an expert assistant helping with the expy AI experiment framework. Use the provided context to answer questions or assist with development.",
+	"groups": [
+		{
+			"name": "Core Experiment Logic",
+			"system_prompt": "Focus on the Experiment abstraction, (de)serialization, and orchestration.",
+			"data": [
+				"experiment_py"
+			]
+		},
+		{
+			"name": "CLI Interface",
+			"system_prompt": "Focus on the command-line interface and argument parsing.",
+			"data": [
+				"cli_py"
+			]
+		},
+		{
+			"name": "Pipeline Components",
+			"system_prompt": "Focus on premade pipeline steps for input/output and experiment construction.",
+			"data": [
+				"pipelines_input_py",
+				"pipelines_output_py",
+				"pipelines_init_py"
+			]
+		},
+		{
+			"name": "Project Metadata & Deployment",
+			"system_prompt": "Focus on project configuration and deployment.",
+			"data": [
+				"pyproject_toml",
+				"flake_nix"
+			]
+		},
+		{
+			"name": "Documentation",
+			"system_prompt": "Focus on user and developer documentation.",
+			"data": [
+				"readme_md"
+			]
+		},
+		{
+			"name": "Utilities & Init",
+			"system_prompt": "Focus on package initialization and utility functions.",
+			"data": [
+				"expy_init_py"
+			]
+		}
+	],
+	"data": {
+		"experiment_py": {
+			"type": "file",
+			"path": "src/expy/experiment.py",
+			"description": "Defines the Experiment abstraction and handles (de)serialization using pyserde."
+		},
+		"cli_py": {
+			"type": "file",
+			"path": "src/expy/cli.py",
+			"description": "Implements the CLI entrypoint for running experiments from the command line."
+		},
+		"pipelines_input_py": {
+			"type": "file",
+			"path": "src/expy/pipelines/input.py",
+			"description": "Premade input pipeline component for experiment construction."
+		},
+		"pipelines_output_py": {
+			"type": "file",
+			"path": "src/expy/pipelines/output.py",
+			"description": "Premade output pipeline component for experiment construction."
+		},
+		"pipelines_init_py": {
+			"type": "file",
+			"path": "src/expy/pipelines/__init__.py",
+			"description": "Pipeline package initialization."
+		},
+		"pyproject_toml": {
+			"type": "file",
+			"path": "pyproject.toml",
+			"description": "Project metadata and build configuration."
+		},
+		"flake_nix": {
+			"type": "file",
+			"path": "flake.nix",
+			"description": "Nix deployment configuration."
+		},
+		"readme_md": {
+			"type": "file",
+			"path": "README.md",
+			"description": "Project documentation and usage instructions."
+		},
+		"expy_init_py": {
+			"type": "file",
+			"path": "src/expy/__init__.py",
+			"description": "Package initialization for expy."
+		}
+	}
+}
