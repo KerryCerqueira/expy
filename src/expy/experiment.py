@@ -238,7 +238,7 @@ class CustomGraphSpec(BaseModel):
 
     def __call__(
         self, state: MutableMapping[str, Any]
-    ) -> BaseModel:
+    ) ->MutableMapping[str, Any]:
         return self._state_graph.invoke(state)
 
 class LibOutputPipeSpec(BaseModel):
@@ -334,8 +334,11 @@ class Experiment(BaseModel):
         for path, data in self.dataset.get_data_iter():
             output[path] = self.inference_pipeline(
                 self.pre_inference_pipeline(data)
-            ).model_dump()
+            )
             with open("inferences.json", "w") as inferences_file:
-                inferences_file.write(json.dumps(output))
+                inferences_file.write(json.dumps(
+                    output,
+                    default=lambda x: x.model_dump()
+                ))
                 for pipe in self.post_inference_pipeline:
                     pipe.run()
