@@ -335,10 +335,10 @@ class Experiment(BaseModel):
             output[path] = self.inference_pipeline(
                 self.pre_inference_pipeline(data)
             )
-            with open("inferences.json", "w") as inferences_file:
-                inferences_file.write(json.dumps(
-                    output,
-                    default=lambda x: x.model_dump()
-                ))
-                for pipe in self.post_inference_pipeline:
-                    pipe.run()
+        with Path.open(Path("inferences.json"), "w") as inferences_file:
+            inferences_file.write(json.dumps(
+                output,
+                default=lambda x: x.model_dump()
+            ))
+        for pipe in self.post_inference_pipeline:
+            pipe.run()
