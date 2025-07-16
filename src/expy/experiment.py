@@ -291,8 +291,11 @@ class NotebookPipeSpec(BaseModel):
         # TODO: Detect path collisions.
         for nb_path in self.notebook_paths:
             nb = nbformat.read(nb_path, as_version=4)
-            nbclient.execute(nb, kernel_name=self.kernel)
-            nbformat.write(nb, nb_path.name)
+            nb_executed = nbclient.execute(nb, kernel_name=self.kernel),
+            nbformat.write(
+                nb_executed,
+                nb_path.name
+            )
 
 
 class Experiment(BaseModel):
