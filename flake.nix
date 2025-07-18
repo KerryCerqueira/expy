@@ -51,6 +51,7 @@
 								langchain
 								langchain-community
 								langchain-huggingface
+								langchain-openai
 							]))
 							jupyter
 						];
