@@ -13,7 +13,7 @@
 				pkgs = import nixpkgs {
 					system = system;
 				};
-				expyFromPkgs = ps: ps.python3Packages.buildPythonPackage {
+				buildExpyFrom = ps: ps.python3Packages.buildPythonPackage {
 					pname = "expy";
 					inherit (pyproject.project) version;
 					format = "pyproject";
@@ -24,41 +24,39 @@
 					propagatedBuildInputs = with ps.python3Packages; [
 						gitpython
 						langgraph
+						langchain
+						langchain-community
+						langchain-openai
 						nbclient
 						pydantic
 						typer
 					];
 				};
-				expy = expyFromPkgs pkgs;
-				expyDev = pkgs.python3.pkgs.mkPythonEditablePackage {
+				expy = buildExpyFrom pkgs;
+				expyEditable = pkgs.python3.pkgs.mkPythonEditablePackage {
 					pname = "expy";
 					inherit (pyproject.project) scripts version;
 					root = "$PKG_ROOT/src";
 				};
 			in {
 				overlays.default = final: prev: {
-					expy = expyFromPkgs prev;
+					expy = buildExpyFrom prev;
 				};
 				packages.default = expy;
 				devShells = {
 					default = pkgs.mkShell {
 						inputsFrom = [ expy ];
 						buildInputs = with pkgs; [
-							expyDev
+							expyEditable
 							(python3.withPackages ( ps: with ps; [
 								ipython
 								ipykernel
-								langchain
-								langchain-community
-								langchain-huggingface
-								langchain-openai
 							]))
 							jupyter
 						];
-						shellHook = # bash
-							''
-							python -m ipykernel install --user --name nix
-							'';
+						shellHook = '' python -m ipykernel install --user --name nix
+						echo "warning: set PKG_ROOT env var for editable expy package to work"
+						'';
 					};
 				};
 			}
