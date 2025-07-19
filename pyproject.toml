@@ -95,8 +95,14 @@ select = [
   "TRY",   ## tryceratops
 ]
 ignore = [
+	"COM812",
+	"D101",
+	"D102",
+	"D103",
 	"D206",
-	"W191"
+	"FIX",
+	"TD",
+	"W191",
 ]
 
 [tool.ruff.lint.pycodestyle]
