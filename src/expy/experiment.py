@@ -1,7 +1,6 @@
 """A module defining an Experiment abstraction for expy."""
 import abc
 import fnmatch
-import glob
 import importlib
 import importlib.util
 import json
@@ -45,9 +44,10 @@ class DataSpec(BaseModel):
         if self.data_repo_path is not None and self.data_commit is None:
             self.data_commit = "HEAD"
         if self.data_repo_path is None and self.data_commit is not None:
-            raise ValueError(
+            error_msg = (
                 "Must specify a data repository when specifying a commit"
             )
+            raise ValueError(error_msg)
         return self
 
     def get_repo(self) -> Repo | None:
@@ -102,7 +102,7 @@ class DataSpec(BaseModel):
         if commit is None:
             expanded_paths = []
             for ptrn in self.data_paths:
-                expanded_paths.extend(glob.glob(ptrn))
+                expanded_paths.extend(Path.glob(Path.cwd(), ptrn))
             return expanded_paths
         blob_paths = [
             str(obj.path)
@@ -189,29 +189,14 @@ class CustomInputPipeSpec(InputPipeSpec):
 
     @model_validator(mode="after")
     def bind_pipeline_fn(self) -> Self:
-        """Load `self.module`, bind `self.fn_name`, and return `self`."""
-        try:
-            spec = importlib.util.spec_from_file_location(
-                self.module.stem, self.module
-            )
-            if spec is None or spec.loader is None:
-                raise FileNotFoundError
-            module: ModuleType = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-        except FileNotFoundError:
-            raise FileNotFoundError(
-                f"File not found: {self.module}"
-            ) from None
-        except SyntaxError:
-            raise ImportError(
-                f"{self.module} contains invalid Python"
-            ) from None
-        try:
-            self._pipeline_fn = getattr(module, self.fn_name)
-        except AttributeError:
-            raise AttributeError(
-                f"`{self.fn_name}` not found in module {self.module}"
-            ) from None
+        spec = importlib.util.spec_from_file_location(
+            self.module.stem, self.module
+        )
+        if spec is None or spec.loader is None:
+            raise FileNotFoundError
+        module: ModuleType = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self._pipeline_fn = getattr(module, self.fn_name)
         return self
 
 
@@ -223,7 +208,6 @@ class CustomGraphSpec(BaseModel):
 
     @model_validator(mode="after")
     def compile_graph(self) -> Self:
-        """Load `self.module`, bind `self.fn_name`, and return `self`."""
         spec = importlib.util.spec_from_file_location(
             self.module.stem, self.module
         )
@@ -279,8 +263,19 @@ class NotebookPipeSpec(BaseModel):
     """
 
     #TODO: This should return notebook objects, not write them to disk.
-    notebook_paths: list[Path] = Field(kw_only=True)
+    notebook_paths: list[str] = Field(kw_only=True)
     kernel: str | None = Field(kw_only=True, default=None)
+
+    def get_matching_paths(self) -> list[Path]:
+        """Get a list of paths matching the notebook glob patterns.
+
+        :return: A list of paths matching the patterns in
+        ``self.notebook_paths``.
+        """
+        expanded_paths = []
+        for ptrn in self.notebook_paths:
+            expanded_paths.extend(Path.glob(Path.cwd(), ptrn))
+        return expanded_paths
 
     def run(self) -> None:
         """Evaluate this notebook pipeline.
@@ -289,9 +284,9 @@ class NotebookPipeSpec(BaseModel):
         results to the working directory.
         """
         # TODO: Detect path collisions.
-        for nb_path in self.notebook_paths:
+        for nb_path in self.get_matching_paths():
             nb = nbformat.read(nb_path, as_version=4)
-            nb_executed = nbclient.execute(nb, kernel_name=self.kernel),
+            nb_executed = nbclient.execute(nb, kernel_name=self.kernel)
             nbformat.write(
                 nb_executed,
                 nb_path.name
