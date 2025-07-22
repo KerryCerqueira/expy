@@ -1,5 +1,6 @@
 """A module defining an Experiment abstraction for expy."""
 import abc
+import datetime
 import fnmatch
 import importlib
 import importlib.util
@@ -13,7 +14,7 @@ import nbclient
 import nbformat
 from git import Blob, Commit, Repo
 from langgraph.graph.state import CompiledStateGraph
-from pydantic import BaseModel, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 
 class DataSpec(BaseModel):
@@ -126,7 +127,7 @@ class DataSpec(BaseModel):
         commit = self.get_commit()
         if commit is None:
             for path in self.get_matching_paths():
-                with open(path, encoding="utf-8") as file:
+                with Path.open(Path(path), encoding="utf-8") as file:
                     data = file.read()
                 yield (path, data)
         else:
@@ -304,6 +305,7 @@ class Experiment(BaseModel):
     which an experiment can be deserialized from.
     """
 
+    json_schema: str = Field(alias="$schema", exclude=True)
     dataset: DataSpec = Field(kw_only=True)
     pre_inference_pipeline: LibInputPipeSpec | CustomInputPipeSpec = Field(
         kw_only=True,
@@ -319,24 +321,34 @@ class Experiment(BaseModel):
             fn_name="inference_pipeline",
         ),
     )
+    n_inference_runs: int = Field(kw_only=True, default=1)
     post_inference_pipeline: list[LibOutputPipeSpec | NotebookPipeSpec] = (
         Field(kw_only=True, default_factory=list)
     )
+    model_config = ConfigDict(extra="forbid")
 
-    def run(self) -> None:
+    def run_inference(self) -> None:
         """Run the experiment."""
         # TODO: Add exception when output dir files exist
         # TODO: Add logging
         # TODO: Add input to run in given directory
         output = {}
-        for path, data in self.dataset.get_data_iter():
-            output[path] = self.inference_pipeline(
+        runs = [{
+            path: self.inference_pipeline(
                 self.pre_inference_pipeline(data)
             )
+            for path, data in self.dataset.get_data_iter()
+        } for _ in range(self.n_inference_runs)]
+        output = {
+            "runs": runs,
+            "date": datetime.datetime.now(tz=datetime.UTC).isoformat(),
+        }
         with Path.open(Path("inferences.json"), "w") as inferences_file:
             inferences_file.write(json.dumps(
                 output,
                 default=lambda x: x.model_dump()
             ))
+
+    def run_post_inference(self) -> None:
         for pipe in self.post_inference_pipeline:
             pipe.run()
