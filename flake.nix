@@ -47,12 +47,12 @@
 					default = pkgs.mkShell {
 						inputsFrom = [ expy ];
 						buildInputs = with pkgs; [
-							expyEditable
 							(python3.withPackages ( ps: with ps; [
+								expyEditable
 								ipython
 								ipykernel
+								jupyter
 							]))
-							jupyter
 						];
 						shellHook = '' python -m ipykernel install --user --name nix
 						echo "warning: set PKG_ROOT env var for editable expy package to work"
