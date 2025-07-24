@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterator, MutableMapping
 from pathlib import Path
 from types import ModuleType
 from typing import Any, ClassVar, Self
+from glob import has_magic
 
 import nbclient
 import nbformat
@@ -34,7 +35,7 @@ class DataSpec(BaseModel):
 
 
     @model_validator(mode= "after")
-    def foo(self) -> Self:
+    def validate_repo(self) -> Self:
         """Finish initializing this ``DataSpec``.
 
         :raises ValueError: When a data repository is not specified but
@@ -134,6 +135,18 @@ class DataSpec(BaseModel):
             for path in self.get_matching_paths():
                 data = commit.tree[path].data_stream.read().decode("utf-8")
                 yield (path, data)
+
+    def purify(self) -> "DataSpec":
+        repo = Repo(self.data_repo_path)
+        commit = repo.commit(self.data_commit).hexsha
+        data_paths = self.get_matching_paths()
+        return DataSpec(
+            data_commit=commit,
+            data_paths=data_paths,
+            data_repo_path=self.data_repo_path,
+        )
+
+
 
 
 class InputPipeSpec(abc.ABC, BaseModel):
@@ -254,6 +267,13 @@ class LibOutputPipeSpec(BaseModel):
         """Run the pipeline by evaluating the specified function."""
         return self._pipeline_fn(**(self.kwargs or {}))
 
+    def purify(self) -> "LibOutputPipeSpec":
+        """Return a purified version of this ``LibOutputPipeSpec``.
+
+        This method returns a new ``LibOutputPipeSpec`` with the
+        function bound to the pipeline function.
+        """
+        return self
 
 class NotebookPipeSpec(BaseModel):
     """Spec for a post-inference pipeline based on a jupyter notebook.
@@ -275,7 +295,10 @@ class NotebookPipeSpec(BaseModel):
         """
         expanded_paths = []
         for ptrn in self.notebook_paths:
-            expanded_paths.extend(Path.glob(Path.cwd(), ptrn))
+            if has_magic(ptrn):
+                expanded_paths.extend(Path.glob(Path.cwd(), ptrn))
+            else:
+                expanded_paths.append(Path(ptrn))
         return expanded_paths
 
     def run(self) -> None:
@@ -293,6 +316,17 @@ class NotebookPipeSpec(BaseModel):
                 nb_path.name
             )
 
+    def purify(self) -> "NotebookPipeSpec":
+        """Return a purified version of this ``NotebookPipeSpec``.
+
+        This method returns a new ``NotebookPipeSpec`` with expanded
+        paths to the notebooks.
+        """
+        return NotebookPipeSpec(
+            notebook_paths=[str(path) for path in self.get_matching_paths()],
+            kernel=self.kernel,
+        )
+
 
 class Experiment(BaseModel):
     """A specification for an AI experiment.
@@ -305,7 +339,7 @@ class Experiment(BaseModel):
     which an experiment can be deserialized from.
     """
 
-    json_schema: str = Field(alias="$schema", exclude=True)
+    json_schema: str | None = Field(alias="$schema", exclude=True)
     dataset: DataSpec = Field(kw_only=True)
     pre_inference_pipeline: LibInputPipeSpec | CustomInputPipeSpec = Field(
         kw_only=True,
@@ -340,15 +374,37 @@ class Experiment(BaseModel):
             for path, data in self.dataset.get_data_iter()
         } for _ in range(self.n_inference_runs)]
         output = {
-            "runs": runs,
             "date": datetime.datetime.now(tz=datetime.UTC).isoformat(),
+            "experiment_metadata": self.purify().model_dump(),
+            "runs": runs,
         }
         with Path.open(Path("inferences.json"), "w") as inferences_file:
-            inferences_file.write(json.dumps(
-                output,
-                default=lambda x: x.model_dump()
-            ))
+            inferences_file.write(
+                json.dumps(
+                    output,
+                    default=lambda x: x.model_dump()
+                    if isinstance(x, BaseModel)
+                    else str(x),
+                )
+            )
 
     def run_post_inference(self) -> None:
         for pipe in self.post_inference_pipeline:
             pipe.run()
+
+    def purify(self) -> "Experiment":
+        """Return a purified version of this ``Experiment``.
+
+        This method returns a new ``Experiment`` with expanded paths in
+        the data specification and pipelines.
+        """
+        return Experiment(
+            **{"$schema": self.json_schema},
+            dataset=self.dataset.purify(),
+            pre_inference_pipeline=self.pre_inference_pipeline,
+            inference_pipeline=self.inference_pipeline,
+            n_inference_runs=self.n_inference_runs,
+            post_inference_pipeline=[
+                pipe.purify() for pipe in self.post_inference_pipeline
+            ],
+        )

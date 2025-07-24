@@ -17,11 +17,20 @@ def run(
     skip_inference: Annotated[
         bool, typer.Option(help="Skip inference step")
     ] = False,
+    rerun: Annotated[
+        bool, typer.Option(help="Rerun from previous metadata")
+    ] = False,
 ) -> None:
     exp_path = path.parent if path.is_file() else path
     os.chdir(exp_path)
-    with Path.open(Path("exp.json")) as f:
-        exp = Experiment.model_validate_json(f.read())
+    if rerun:
+        with Path.open(Path("inferences.json")) as f:
+            inferences = json.load(f)
+        inferences["experiment_metadata"]["$schema"] = None
+        exp = Experiment.model_validate(inferences["experiment_metadata"])
+    else:
+        with Path.open(Path("exp.json")) as f:
+            exp = Experiment.model_validate_json(f.read())
     if not skip_inference:
         exp.run_inference()
     exp.run_post_inference()
